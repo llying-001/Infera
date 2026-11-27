@@ -56,6 +56,7 @@ def _args(**overrides) -> argparse.Namespace:
         session_affinity_ttl_seconds=3600,
         decode_input_demand=None,
         decode_request_weight=None,
+        decode_output_demand=None,
         pd_prefill_guard_release=None,
     )
     base.update(overrides)
@@ -131,16 +132,19 @@ def test_rust_only_routing_switches_are_forwarded_only_when_given(monkeypatch):
     argv = _argv(monkeypatch)
     assert "--decode-input-demand" not in argv
     assert "--decode-request-weight" not in argv
+    assert "--decode-output-demand" not in argv
     assert "--pd-prefill-guard-release" not in argv
     argv = _argv(
         monkeypatch,
         router_policy="kv-aware",
         decode_input_demand="shadow",
         decode_request_weight=0,
+        decode_output_demand="on",
         pd_prefill_guard_release="completion",
     )
     assert _value_of(argv, "--decode-input-demand") == "shadow"
     assert _value_of(argv, "--decode-request-weight") == "0"
+    assert _value_of(argv, "--decode-output-demand") == "on"
     assert _value_of(argv, "--pd-prefill-guard-release") == "completion"
 
 
@@ -149,6 +153,7 @@ def test_rust_only_routing_switches_are_forwarded_only_when_given(monkeypatch):
     [
         ["--decode-input-demand", "on"],
         ["--decode-request-weight", "180000"],
+        ["--decode-output-demand", "on"],
         ["--pd-prefill-guard-release", "completion"],
     ],
 )
@@ -158,7 +163,12 @@ def test_rust_only_routing_switches_need_the_rust_backend(flags, capsys):
         parse_server_args(["--router-backend", "python", *argv])
     assert "requires --router-backend rust" in capsys.readouterr().err
     args = parse_server_args(["--router-backend", "rust", *argv])
-    given = (args.decode_input_demand, args.decode_request_weight, args.pd_prefill_guard_release)
+    given = (
+        args.decode_input_demand,
+        args.decode_request_weight,
+        args.decode_output_demand,
+        args.pd_prefill_guard_release,
+    )
     assert flags[1] in [str(v) for v in given if v is not None]
 
 

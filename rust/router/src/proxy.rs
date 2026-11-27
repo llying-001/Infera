@@ -294,6 +294,7 @@ impl Stream for GuardedStream {
                 if let Some(tracker) = this.tracker.as_mut() {
                     tracker.observe_stream_chunk(chunk);
                 }
+                this._guard.observe_output(chunk);
                 if let Some(done) = this.done.as_mut() {
                     done.feed(chunk);
                     // The client holds the whole answer as soon as the
@@ -694,6 +695,7 @@ impl Stream for GuardedBody {
                 if let Some(tracker) = this.tracker.as_mut() {
                     tracker.observe_stream_chunk(chunk);
                 }
+                this._guard.observe_output(chunk);
                 if let Some(done) = this.done.as_mut() {
                     done.feed(chunk);
                     // Same race as the HTTP leg: the client can drop the body

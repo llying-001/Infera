@@ -303,6 +303,17 @@ less evenly; see `examples/sglang_2p1d_glm5.2/README.md`.
 `/metrics` adds `infera_router_decode_demand_requests{target}`, the held
 requests per Decode route key.
 
+### Output growth
+
+Input demand books a request's prompt and nothing more, so a target holding long
+generations looks lighter than it is until they end. `--decode-output-demand on`
+(or `INFERA_DECODE_OUTPUT_DEMAND`; requires `--decode-input-demand shadow|on`;
+off by default) adds the output each streamed Decode response carries to its
+reservation as it arrives, and releases it with the reservation. Output tokens are
+estimated from the generated text (`choices[].delta` / `choices[].text`, or a
+Responses `*.delta` event) at 4 bytes per token, because engines batch several
+tokens per event (vLLM `--stream-interval`). Unary responses are not grown.
+
 ### Future: one tokenization end to end
 
 The router and each engine still tokenize the same prompt separately. Sending the

@@ -22,6 +22,7 @@ the **same** on the server and every worker. See
 | `--session-affinity-ttl-seconds` | `3600` | idle seconds before a session binding is dropped, 1–86400 |
 | `--decode-input-demand` | (unset: `$INFERA_DECODE_INPUT_DEMAND`, else `off`) | `off` \| `shadow` \| `on`: pick Decode targets by in-flight input tokens (Rust backend, `kv-aware`) |
 | `--decode-request-weight` | (unset: `$INFERA_DECODE_REQUEST_WEIGHT`, else `0`) | with `--decode-input-demand`: input tokens charged per request a Decode target already holds, so ranks balance by request count as well as tokens |
+| `--decode-output-demand` | (unset: `$INFERA_DECODE_OUTPUT_DEMAND`, else `off`) | `off` \| `on`, with `--decode-input-demand`: also charge the output a Decode target streams back, until the stream ends |
 | `--pd-prefill-guard-release` | (unset: `$INFERA_PD_PREFILL_GUARD_RELEASE`, else `decode`) | `decode` \| `completion`: release PD Prefill load when Decode ends or when Prefill completes (Rust backend) |
 | `--kv-overlap-weight` | `1.0` | KV-aware: cache locality vs load balance |
 | `--kv-prefill-overlap-weight` | (unset) | KV-aware PD: prefill-side weight (typical `20.0`); overrides the global |

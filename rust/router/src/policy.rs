@@ -144,14 +144,22 @@ pub struct ActiveGuard {
     entries: Vec<(String, Vec<u64>)>,
     prefill_session: Option<crate::session_affinity::Lease>,
     decode_session: Option<crate::session_affinity::Lease>,
-    // Held only for its Drop, which releases the Decode demand.
-    _decode_demand: Option<Reservation>,
+    // Its Drop releases the Decode demand; streamed output may grow it first.
+    decode_demand: Option<Reservation>,
 }
 
 impl ActiveGuard {
     pub fn with_decode_demand(mut self, reservation: Option<Reservation>) -> Self {
-        self._decode_demand = reservation;
+        self.decode_demand = reservation;
         self
+    }
+
+    /// Charge a streamed response chunk's output to the Decode demand, when
+    /// `--decode-output-demand` is on.
+    pub(crate) fn observe_output(&mut self, chunk: &[u8]) {
+        if let Some(reservation) = self.decode_demand.as_mut() {
+            reservation.observe_output(chunk);
+        }
     }
 
     pub fn with_sessions(
@@ -194,7 +202,7 @@ impl ActiveGuard {
             entries,
             prefill_session: None,
             decode_session: None,
-            _decode_demand: None,
+            decode_demand: None,
         }
     }
 
@@ -208,7 +216,7 @@ impl ActiveGuard {
             entries: vec![self.entries.remove(0)],
             prefill_session: None,
             decode_session: None,
-            _decode_demand: None,
+            decode_demand: None,
         })
     }
 }
@@ -339,6 +347,9 @@ pub struct KvEventAwarePolicy {
     /// Input tokens charged per request a Decode target already holds; see
     /// `Config::decode_request_weight`.
     decode_request_weight: u64,
+    /// Also charge streamed output to the Decode demand; see
+    /// `Config::decode_output_demand`.
+    decode_output_demand: bool,
     demand: Ledger,
     kv: Arc<KvEventClient>,
     hasher: Arc<BlockHasher>,
@@ -385,6 +396,7 @@ impl KvEventAwarePolicy {
         KvEventAwarePolicy {
             decode_input_demand: DecodeDemandMode::Off,
             decode_request_weight: 0,
+            decode_output_demand: false,
             demand: Ledger::default(),
             kv,
             hasher: Arc::new(hasher),
@@ -408,6 +420,11 @@ impl KvEventAwarePolicy {
 
     pub fn with_decode_request_weight(mut self, tokens_per_request: u64) -> Self {
         self.decode_request_weight = tokens_per_request;
+        self
+    }
+
+    pub fn with_decode_output_demand(mut self, on: bool) -> Self {
+        self.decode_output_demand = on;
         self
     }
 
@@ -808,7 +825,8 @@ impl Policy for KvEventAwarePolicy {
                     &mut ledger,
                     keys[picked].clone(),
                     work[picked].0,
-                );
+                )
+                .tracking_output(self.decode_output_demand);
                 (picked, suggested, reservation, costs)
             };
             // Exact unless estimated, multimodal, or the worker is known to render differently.
@@ -1501,6 +1519,54 @@ mod tests {
         }
         drop(picks);
         assert!(shadow.demand_snapshot().is_empty());
+    }
+
+    #[test]
+    fn decode_request_weight_spreads_a_rank_multiplexed_decode_over_its_ranks() {
+        // A vLLM DP4 decode registers dp_size without a rank: one target per
+        // rank, each pinned by header. Equal requests fill every rank once
+        // before any rank gets a second.
+        let policy = demand_policy(DecodeDemandMode::On).with_decode_request_weight(1000);
+        let workers = vec![worker("d", 0, Some(4))];
+        let picks: Vec<_> = (0..8)
+            .map(|_| policy.pick(&workers, &json!({"prompt": vec![7;32]}), Role::Decode))
+            .collect();
+        let mut ranks: Vec<_> = picks
+            .iter()
+            .map(|p| crate::dp::header_rank(&p.target).unwrap())
+            .collect();
+        ranks.sort_unstable();
+        assert_eq!(ranks, [0, 0, 1, 1, 2, 2, 3, 3]);
+        assert_eq!(policy.demand_snapshot()["d#dp2"].requests, 2);
+        drop(picks);
+        assert!(policy.demand_snapshot().is_empty());
+    }
+
+    #[test]
+    fn decode_output_demand_steers_away_from_long_generations() {
+        for (tracked, want) in [(false, "a"), (true, "b")] {
+            let policy = demand_policy(DecodeDemandMode::On).with_decode_output_demand(tracked);
+            let workers = vec![worker("a", 0, None), worker("b", 0, None)];
+            let mut first = policy.pick(&workers, &json!({"prompt": vec![7;32]}), Role::Decode);
+            assert_eq!(first.target.route_key(), "a");
+            let second = policy.pick(&workers, &json!({"prompt": vec![7;64]}), Role::Decode);
+            assert_eq!(second.target.route_key(), "b");
+            // "a" has streamed 400 bytes (100 tokens) of output since.
+            let text = "x".repeat(400);
+            let chunk = format!(
+                "data: {}\n\n",
+                json!({"choices":[{"delta":{"content":text}}]})
+            );
+            first
+                .decode_demand
+                .as_mut()
+                .unwrap()
+                .observe_output(chunk.as_bytes());
+            let third = policy.pick(&workers, &json!({"prompt": vec![7;32]}), Role::Decode);
+            assert_eq!(third.target.route_key(), want, "tracked {tracked}");
+            drop((first, second, third));
+            assert!(policy.demand_snapshot().is_empty());
+        }
     }
 
     #[test]

@@ -151,6 +151,14 @@ def parse_server_args(argv: list[str] | None = None) -> argparse.Namespace:
         "$INFERA_DECODE_REQUEST_WEIGHT, else 0 (tokens only).",
     )
     parser.add_argument(
+        "--decode-output-demand",
+        choices=("off", "on"),
+        default=None,
+        help="Rust backend with --decode-input-demand: also charge the output a "
+        "Decode target streams back until the stream ends. Unset defers to "
+        "$INFERA_DECODE_OUTPUT_DEMAND, else off.",
+    )
+    parser.add_argument(
         "--pd-prefill-guard-release",
         choices=("decode", "completion"),
         default=None,
@@ -359,6 +367,7 @@ def parse_server_args(argv: list[str] | None = None) -> argparse.Namespace:
         for flag, value in (
             ("--decode-input-demand", args.decode_input_demand),
             ("--decode-request-weight", args.decode_request_weight),
+            ("--decode-output-demand", args.decode_output_demand),
             ("--pd-prefill-guard-release", args.pd_prefill_guard_release),
         )
         if value is not None

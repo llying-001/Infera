@@ -87,6 +87,18 @@ pub struct Config {
     #[arg(long, default_value_t = 0, env = "INFERA_DECODE_REQUEST_WEIGHT")]
     pub decode_request_weight: u64,
 
+    /// Decode input demand: also charge the output a decode streams back
+    /// (estimated from its text) until the stream ends, so a target holding
+    /// long generations is not booked as if it held only their prompts.
+    #[arg(
+        long,
+        default_value_t = false,
+        action = clap::ArgAction::Set,
+        value_parser = clap::builder::BoolishValueParser::new(),
+        env = "INFERA_DECODE_OUTPUT_DEMAND"
+    )]
+    pub decode_output_demand: bool,
+
     /// `etcd` (external) or `kubernetes` (workers publish into their own Pod
     /// annotation and the API server is watched).
     #[arg(long, default_value = "etcd")]
@@ -270,6 +282,10 @@ impl Config {
             && self.decode_input_demand == crate::decode_demand::Mode::Off
         {
             anyhow::bail!("--decode-request-weight requires --decode-input-demand shadow or on");
+        }
+        if self.decode_output_demand && self.decode_input_demand == crate::decode_demand::Mode::Off
+        {
+            anyhow::bail!("--decode-output-demand requires --decode-input-demand shadow or on");
         }
         if self.router_policy == "kv-aware" && self.kv_tokenizer_path.is_none() {
             tracing::warn!(
@@ -535,5 +551,30 @@ mod tests {
         assert!(weighted("on").validate().is_ok());
         let default = Config::try_parse_from(["router"]).unwrap();
         assert_eq!(default.decode_request_weight, 0);
+    }
+
+    #[test]
+    fn decode_output_demand_is_off_by_default_and_requires_decode_demand() {
+        let tracked = |mode: &str, value: &str| {
+            Config::try_parse_from([
+                "router",
+                "--router-policy",
+                "kv-aware",
+                "--decode-input-demand",
+                mode,
+                "--decode-output-demand",
+                value,
+            ])
+            .unwrap()
+        };
+        assert!(tracked("off", "on").validate().is_err());
+        assert!(tracked("off", "off").validate().is_ok());
+        assert!(tracked("on", "1").decode_output_demand);
+        assert!(tracked("shadow", "true").validate().is_ok());
+        assert!(
+            !Config::try_parse_from(["router"])
+                .unwrap()
+                .decode_output_demand
+        );
     }
 }
